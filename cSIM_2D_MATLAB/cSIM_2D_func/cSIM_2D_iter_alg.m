@@ -1,0 +1,127 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% cSIM_2D_iter_alg iteratively solves the coherent speckle structured             % 
+% illumination optimization problem for super-resolved phase image. At the same   % 
+% time, the algorithm jointly estimates the unknown speckle field, aberrated      % 
+% pupil function, and refines the scan positions.                                 %                      
+%                                                                                 %
+% Inputs:                                                                         %
+%       I_image_up        : measurement image stack                               %
+%       obj               : initial guess of the sample's transmittance           %
+%       field_p_whole     : initial guess of the speckle field                    %
+%       Pupil_obj         : pupil function of the image system                    %
+%       fxxp              : x spatial frequency with the size of the speckle      %
+%       fyyp              : y spatial frequency with the size of the speckle      %
+%       Hz_det            : propagation kernel to different camera planes         %
+%       Gaussian          : Gaussian Fourier support of the object                %
+%       Pupil_NAs         : Fourier support of the speckle pattern                %
+%       zerpoly           : Zernike polynomials                                   %
+%       xshift            : x-dimension shift of scanning positions               %
+%       yshift            : y-dimension shift of scanning positions               %
+%       itr               : max number of iterations                              %
+% Outputs:                                                                        %
+%       obj               : estimated sample's transmittance                      %
+%       field_p_whole     : estimated speckle field                               %
+%       Pupil_obj         : estimated pupil function of the image system          %
+%       xshift            : refined x-dimension shift of scanning positions       %
+%       yshift            : refined y-dimension shift of scanning positions       %
+%       err               : modified cost function to evaluate convergence        % 
+%                                                                                 %
+%                                                                                 %
+%          Copyright (C) Li-Hao Yeh 2019                                          %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function [obj, field_p_whole, Pupil_obj, xshift, yshift, err] = ...
+    cSIM_2D_iter_alg(I_image_up, obj, field_p_whole, Pupil_obj, ...
+    fxxp, fyyp, Hz_det, Gaussian, Pupil_NAs, zerpoly, xshift, yshift, itr)
+
+
+F = @(x) fft2(x);
+iF = @(x) ifft2(x);
+
+global ps N_bound_pad N M Nc Mc xshift_max yshift_max Nimg N_defocus
+
+% cost function
+err = zeros(1,itr+1);
+
+tic;
+fprintf('| Iter  |   error    | Elapsed time (sec) |\n');
+for i = 1:itr
+    
+    % Sequential update
+    
+    for j = 1:Nimg
+       
+        
+        for m = 1:N_defocus
+            
+            fieldp_shift = iF(F(field_p_whole).*exp(1j*2*pi*ps*(fxxp.*xshift(j,m) + fyyp.*yshift(j,m))));
+            field_p_gpu = fieldp_shift(1+yshift_max:Nc+yshift_max,1+xshift_max:Mc+xshift_max);
+            I_image_up_current_sqrt = sqrt(gpuArray(I_image_up(:,:,j,m)));
+            
+            field_f = F(field_p_gpu.*obj);
+            z_temp = iF(Pupil_obj.*Hz_det(:,:,m).*field_f); 
+            z_temp_crop_abs = abs(z_temp(N_bound_pad+1:N_bound_pad+N,N_bound_pad+1:N_bound_pad+M));
+            
+            err(i+1) = err(i+1)+ gather(sum(sum(abs(I_image_up_current_sqrt - z_temp_crop_abs).^2)));
+            
+            residual = F( z_temp./(abs(z_temp)+eps).*padarray(I_image_up_current_sqrt - z_temp_crop_abs,[N_bound_pad,N_bound_pad],0) );
+            I_temp = iF(conj(Pupil_obj.*Hz_det(:,:,m)).*residual);
+
+            grad_Iobj = -conj(field_p_gpu).*I_temp;
+            grad_Ip = -iF(F(padarray(conj(obj).*I_temp,[yshift_max,xshift_max],0)).*exp(-1j*2*pi*ps*(fxxp.*xshift(j,m) + fyyp.*yshift(j,m))));
+            grad_P = -conj(Hz_det(:,:,m).*field_f).*residual;
+
+            obj = obj - grad_Iobj/max(max(abs(field_p_gpu)))^2;
+            field_p_whole = field_p_whole - grad_Ip/max(abs(obj(:)))^2;
+            Pupil_obj = Pupil_obj - grad_P/max(abs(field_f(:))).*abs(field_f)./(abs(field_f).^2+1e-3)/5;
+            
+            % shift estimation
+            
+            Ip_shift_fx = iF(F(field_p_whole).*(1j*2*pi*fxxp).*exp(1j*2*pi*ps*(fxxp.*xshift(j,m) + fyyp.*yshift(j,m))));
+            Ip_shift_fy = iF(F(field_p_whole).*(1j*2*pi*fyyp).*exp(1j*2*pi*ps*(fxxp.*xshift(j,m) + fyyp.*yshift(j,m))));
+
+            Ip_shift_fx = Ip_shift_fx(1+yshift_max:Nc+yshift_max,1+xshift_max:Mc+xshift_max);
+            Ip_shift_fy = Ip_shift_fy(1+yshift_max:Nc+yshift_max,1+xshift_max:Mc+xshift_max);
+
+            grad_xshift = -real(sum(sum(conj(I_temp).*obj.*Ip_shift_fx)));
+            grad_yshift = -real(sum(sum(conj(I_temp).*obj.*Ip_shift_fy)));
+
+            xshift(j,m) = xshift(j,m) - gather(grad_xshift/N/M/max(abs(obj(:)))^2);
+            yshift(j,m) = yshift(j,m) - gather(grad_yshift/N/M/max(abs(obj(:)))^2);
+            
+            
+         end
+    end
+    
+    obj = iF(F(obj).*Gaussian);
+    field_p_whole = iF(F(field_p_whole).*Pupil_NAs);
+    Pupil_angle = angle(Pupil_obj);
+    Pupil_angle = Pupil_angle - sum(sum(zerpoly(:,:,2).*Pupil_angle))/sum(sum(zerpoly(:,:,2).^2)).*zerpoly(:,:,2)...
+        - sum(sum(zerpoly(:,:,3).*Pupil_angle))/sum(sum(zerpoly(:,:,3).^2)).*zerpoly(:,:,3);
+    Pupil_obj = abs(Pupil_obj).*exp(1j*Pupil_angle);
+
+
+
+    
+    if mod(i,1) == 0
+        fprintf('|  %2d   |  %.2e  |        %.2f      |\n', i, err(i+1),toc);
+        figure(39);
+        subplot(2,3,1),imagesc(abs(obj));colormap gray;axis square;
+        subplot(2,3,4),imagesc(angle(obj));colormap gray;axis square;
+
+        subplot(2,3,2),imagesc(abs(field_p_whole).^2);colormap gray;axis square;
+        subplot(2,3,5),imagesc(angle(field_p_whole));colormap gray;axis square;
+        
+        
+        subplot(2,3,3),plot(xshift,yshift);colormap gray;axis image;
+        subplot(2,3,6),imagesc(fftshift(angle(Pupil_obj)));colormap gray;axis image;
+        
+
+        pause(0.001);
+    end
+
+end
+
+
+end

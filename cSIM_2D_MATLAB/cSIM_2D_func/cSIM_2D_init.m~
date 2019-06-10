@@ -1,0 +1,36 @@
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% cSIM_2D_init initialize the sample's transmittance and speckle field   %                          
+%                                                                        %
+% Inputs:                                                                %
+%       I_image_up    : measurement image stack                          %
+%       xshift        : x-dimension shift of scanning positions          %
+%       yshift        : y-dimension shift of scanning positions          %
+%       fxxp          : x spatial frequency with the size of the speckle %
+%       fyyp          : y spatial frequency with the size of the speckle %
+%       itr           : max number of iterations                         %
+% Outputs:                                                               %
+%       obj           : initial guess of the sample's transmittance      %
+%       field_p_whole : initial guess of the speckle field               %
+%                                                                        %
+%                                                                        %
+%          Copyright (C) Li-Hao Yeh 2019                                 %
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+function [obj, field_p_whole] = cSIM_2D_init(I_image_up, xshift, yshift, fxxp, fyyp)
+
+global ps N_bound_pad Nc Mc Np Mp xshift_max yshift_max Nimg
+
+
+F = @(x) fft2(x);
+iF = @(x) ifft2(x);
+
+obj = gpuArray(ones(Nc,Mc));
+field_p_whole = ones(Np,Mp,'gpuArray');
+
+for j = 1:Nimg    
+    fieldp_shift_back = iF(F(padarray(sqrt(padarray(gpuArray(I_image_up(:,:,j,1)),[N_bound_pad,N_bound_pad])),[yshift_max,xshift_max],0)).*exp(-1j*2*pi*ps*(fxxp.*xshift(j,1) + fyyp.*yshift(j,1))));
+    field_p_whole = field_p_whole + fieldp_shift_back/Nimg;
+end
+
+end
