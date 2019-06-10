@@ -1,8 +1,5 @@
 # 2D_high_content_speckle_SIM
 
-
-# cSIM with speckle in Python3
-
 These are MATLAB/Python3 implementations of coherent/fluorescent structured illumination microscopy algorithm with random speckle illumination. With the speckle NA much larger than the objective NA, we are able to achieve 4x resolution gain with this technique. For detailed explanation, please see our paper [1]. To use this code, please also cite [1]. <br/>
 
 ```cSIM_2D_MATLAB/Python3``` contains the coherent part of the processing code. It takes the coherent speckle illuminated measurements and reconstruct super-resolution phase image. <br/>
