@@ -16,7 +16,7 @@ Python 3.6, ArrayFire <br/>
 
 ## Data download
 You can find sample experiment data (2 um fluorescence beads imaged with 4x 0.1 NA objective) from here: <br/>
-1. Coherent image stack: <br/>
-2. Fluorescence image stack: <br/>
+1. Coherent image stack: https://drive.google.com/file/d/1GETISfw-NZxPmIvGWJfxIlyClB0Eebt2/view?usp=sharing <br/>
+2. Fluorescence image stack: https://drive.google.com/file/d/1Fn_i4kqypjx_0_zD9ehHAfYp7Jrf49Tp/view?usp=sharing <br/>
 
 Please make sure your dataset is in the same path as in the one assigned in the code. <br/>
